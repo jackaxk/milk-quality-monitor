@@ -1,0 +1,351 @@
+#include <WiFi.h>
+#include <WebServer.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+// Replace with your Wi-Fi credentials
+const char* ssid = "Skibidi";
+const char* password = "espresso2006";
+
+// Sensor pins
+#define MQ3_PIN 34
+#define MQ4_PIN 35
+#define MQ7_PIN 32
+#define WATER_LEVEL_PIN 33
+#define TEMP_SENSOR_PIN 4
+
+// Calibration constants
+const float MQ3_RL = 10.0;
+const float MQ4_RL = 10.0;
+const float MQ7_RL = 10.0;
+const float MQ3_CLEAN_AIR_RATIO = 9.8;
+const float MQ4_CLEAN_AIR_RATIO = 4.4;
+const float MQ7_CLEAN_AIR_RATIO = 27.0;
+
+// OneWire and DS18B20 setup
+OneWire oneWire(TEMP_SENSOR_PIN);
+DallasTemperature sensors(&oneWire);
+
+// Web server on port 80
+WebServer server(80);
+
+// Variables to store Ro values
+float MQ3_Ro, MQ4_Ro, MQ7_Ro;
+
+// Define pin for the water detection sensor
+int sensorValue = 0; // Variable to store sensor reading
+
+// Function to calculate Rs
+float calculateRs(int analogValue, float RL) {
+  float sensorVoltage = analogValue * (3.3 / 4095.0);
+  float RS = (3.3 - sensorVoltage) / sensorVoltage * RL;
+  return RS;
+}
+
+// Calibration function for Ro
+float calibrateRo(int analogValue, float RL, float cleanAirRatio) {
+  float Rs = calculateRs(analogValue, RL);
+  return Rs / cleanAirRatio;
+}
+
+// Function to calculate gas concentration (ppm)
+float calculatePPM(float Rs, float Ro, float a, float b) {
+  float ratio = Rs / Ro;
+  float ppm = pow(10, (log10(ratio) - b) / a);
+  return ppm;
+}
+
+// Function to convert water level to percentage
+float calculateWaterLevel(int analogValue) {
+  return (analogValue / 4095.0) * 100.0;
+}
+
+// Evaluate milk quality and return an index tier
+String evaluateMilkQuality(float mq3PPM, float mq4PPM, float mq7PPM, float waterLevel, float temperature) {
+  float qualityIndex = 0;
+
+  // Algorithm with weight percentages
+  qualityIndex += (mq7PPM <= 5) ? 15 : (mq7PPM <= 20) ? 8 : 0; // Carbon Monoxide (15%)
+  qualityIndex += (mq4PPM <= 200) ? 20 : (mq4PPM <= 400) ? 10 : 0; // Methane (20%)
+  qualityIndex += (mq3PPM <= 100) ? 25 : (mq3PPM <= 300) ? 12 : 0; // Alcohol (25%)
+  qualityIndex += (waterLevel >= 80) ? 15 : (waterLevel >= 30) ? 8 : 0; // Milk Volume (15%)
+  qualityIndex += (temperature >= 0 && temperature <= 4) ? 25 : (temperature >= 5 && temperature <= 10) ? 10 : 0; // Temperature (25%)
+
+  // Determine quality tier
+  if (qualityIndex >= 80) return "Excellent";
+  else if (qualityIndex >= 60) return "Good";
+  else if (qualityIndex >= 40) return "Fair";
+  else if (qualityIndex >= 20) return "Poor";
+  else return "Very Poor";
+}
+
+// Serve the main HTML page
+void handleRoot() {
+  String html = R"rawliteral(
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Milk Quality Monitoring</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 0;
+      padding: 0;
+      background: linear-gradient(to right, #4facfe, #00f2fe);
+      color: #333;
+      text-align: center;
+    }
+    .container {
+      padding: 20px;
+    }
+    h1 {
+      font-size: 2.5em;
+      color: #fff;
+    }
+    .card {
+      background: #fff;
+      margin: 20px auto;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+      max-width: 400px;
+    }
+    .card h2 {
+      color: #4facfe;
+      font-size: 1.5em;
+    }
+    .data {
+      font-size: 1.2em;
+      margin: 10px 0;
+    }
+    .quality {
+      background: #e3f2fd;
+      padding: 15px;
+      border-radius: 8px;
+      margin: 20px auto;
+      max-width: 800px;
+    }
+    .algorithm {
+      background: #fff3e0;
+      padding: 15px;
+      border-radius: 8px;
+      margin: 20px auto;
+      max-width: 800px;
+      text-align: left;
+    }
+    .algorithm h2 {
+      color: #ff9800;
+    }
+    .graphs {
+      margin: 20px auto;
+      max-width: 800px;
+      background: #fff;
+      padding: 20px;
+      border-radius: 10px;
+      box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+    }
+    .graph-container {
+      display: none; /* Initially hidden */
+      margin-top: 20px;
+    }
+    .buttons {
+      margin-top: 20px;
+    }
+    .buttons button {
+      background: #4facfe;
+      color: white;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 5px;
+      margin: 5px;
+      cursor: pointer;
+      font-size: 1em;
+    }
+    .buttons button.active {
+      background: #00c4cc;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Milk Quality Monitoring</h1>
+    <div id="sensorData" class="card">
+      <h2>Sensor Readings</h2>
+      <div class="data"><strong>MQ-3 PPM (Alcohol):</strong> <span id="mq3">Loading...</span></div>
+      <div class="data"><strong>MQ-4 PPM (Methane):</strong> <span id="mq4">Loading...</span></div>
+      <div class="data"><strong>MQ-7 PPM (CO):</strong> <span id="mq7">Loading...</span></div>
+      <div class="data"><strong>Water Level (%):</strong> <span id="waterLevel">Loading...</span></div>
+      <div class="data"><strong>Temperature (°C):</strong> <span id="temperature">Loading...</span></div>
+    </div>
+
+    <div class="quality">
+      <h2>Milk Quality Index</h2>
+      <div class="data"><strong>Overall Quality:</strong> <span id="quality">Loading...</span></div>
+    </div>
+    <div class="algorithm">
+      <h2>Milk Quality Algorithm</h2>
+      <p>The Milk Quality Index is calculated using the following parameters and scoring system:</p>
+      <ul>
+        <li><strong>Carbon Monoxide (MQ-7):</strong> 15% weight — 15 points for 0–5 ppm, 8 points for 6–20 ppm.</li>
+        <li><strong>Methane (MQ-4):</strong> 20% weight — 20 points for 0–200 ppm, 10 points for 201–400 ppm.</li>
+        <li><strong>Alcohol (MQ-3):</strong> 25% weight — 25 points for 0–100 ppm, 12 points for 101–300 ppm.</li>
+        <li><strong>Milk Volume (Water Level):</strong> 15% weight — 15 points for 80–100%, 8 points for 30–79%.</li>
+        <li><strong>Temperature:</strong> 25% weight — 25 points for 0–4°C, 10 points for 5–10°C.</li>
+      </ul>
+      <p>The overall quality is categorized as:</p>
+      <ul>
+        <li><strong>Excellent:</strong> 80-100 points</li>
+        <li><strong>Good:</strong> 60-79 points</li>
+        <li><strong>Fair:</strong> 40-59 points</li>
+        <li><strong>Poor:</strong> 20-39 points</li>
+        <li><strong>Very Poor:</strong> Below 20 points</li>
+      </ul>
+    </div>
+
+    <!-- Graph Buttons -->
+    <div class="buttons">
+      <button id="btnMQ3" class="active">MQ-3 Graph</button>
+      <button id="btnMQ4">MQ-4 Graph</button>
+      <button id="btnMQ7">MQ-7 Graph</button>
+    </div>
+
+    <!-- Graphs Section -->
+    <div class="graphs">
+      <div id="graphMQ3Container" class="graph-container" style="display: block;">
+        <canvas id="graphMQ3"></canvas>
+      </div>
+      <div id="graphMQ4Container" class="graph-container">
+        <canvas id="graphMQ4"></canvas>
+      </div>
+      <div id="graphMQ7Container" class="graph-container">
+        <canvas id="graphMQ7"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script>
+    const ctxMQ3 = document.getElementById('graphMQ3').getContext('2d');
+    const ctxMQ4 = document.getElementById('graphMQ4').getContext('2d');
+    const ctxMQ7 = document.getElementById('graphMQ7').getContext('2d');
+
+    const chartMQ3 = new Chart(ctxMQ3, { type: 'line', data: { labels: [], datasets: [{ label: 'MQ-3 vs Temperature', data: [], borderColor: '#ff6384', backgroundColor: 'rgba(255, 99, 132, 0.2)', tension: 0.4 }] } });
+    const chartMQ4 = new Chart(ctxMQ4, { type: 'line', data: { labels: [], datasets: [{ label: 'MQ-4 vs Temperature', data: [], borderColor: '#36a2eb', backgroundColor: 'rgba(54, 162, 235, 0.2)', tension: 0.4 }] } });
+    const chartMQ7 = new Chart(ctxMQ7, { type: 'line', data: { labels: [], datasets: [{ label: 'MQ-7 vs Temperature', data: [], borderColor: '#4bc0c0', backgroundColor: 'rgba(75, 192, 192, 0.2)', tension: 0.4 }] } });
+
+    async function fetchData() {
+      try {
+        const response = await fetch('/data');
+        const data = await response.json();
+
+        document.getElementById('mq3').textContent = data.mq3;
+        document.getElementById('mq4').textContent = data.mq4;
+        document.getElementById('mq7').textContent = data.mq7;
+        document.getElementById('waterLevel').textContent = data.waterLevel;
+        document.getElementById('temperature').textContent = data.temperature;
+        document.getElementById('quality').textContent = data.quality;
+
+        const timeLabel = new Date().toLocaleTimeString();
+
+        // Update graphs
+        chartMQ3.data.labels.push(timeLabel);
+        chartMQ3.data.datasets[0].data.push(data.mq3);
+        chartMQ4.data.labels.push(timeLabel);
+        chartMQ4.data.datasets[0].data.push(data.mq4);
+        chartMQ7.data.labels.push(timeLabel);
+        chartMQ7.data.datasets[0].data.push(data.mq7);
+
+        if (chartMQ3.data.labels.length > 20) chartMQ3.data.labels.shift();
+        if (chartMQ4.data.labels.length > 20) chartMQ4.data.labels.shift();
+        if (chartMQ7.data.labels.length > 20) chartMQ7.data.labels.shift();
+
+        chartMQ3.update();
+        chartMQ4.update();
+        chartMQ7.update();
+      } catch (error) {
+        console.error('Error fetching data:', error);
+      }
+    }
+
+    function showGraph(graphId) {
+      document.querySelectorAll('.graph-container').forEach(container => container.style.display = 'none');
+      document.getElementById(graphId).style.display = 'block';
+
+      document.querySelectorAll('.buttons button').forEach(button => button.classList.remove('active'));
+      document.querySelector(`#btn${graphId.replace('graph', '')}`).classList.add('active');
+    }
+
+    document.getElementById('btnMQ3').addEventListener('click', () => showGraph('graphMQ3Container'));
+    document.getElementById('btnMQ4').addEventListener('click', () => showGraph('graphMQ4Container'));
+    document.getElementById('btnMQ7').addEventListener('click', () => showGraph('graphMQ7Container'));
+
+    setInterval(fetchData, 1000);
+    fetchData();
+  </script>
+</body>
+</html>
+  )rawliteral";
+
+  server.send(200, "text/html", html);
+}
+
+// Serve JSON data
+void handleData() {
+  int mq3Value = analogRead(MQ3_PIN);
+  int mq4Value = analogRead(MQ4_PIN);
+  int mq7Value = analogRead(MQ7_PIN);
+  sensorValue = analogRead(WATER_LEVEL_PIN);
+
+  float MQ3_Rs = calculateRs(mq3Value, MQ3_RL);
+  float MQ4_Rs = calculateRs(mq4Value, MQ4_RL);
+  float MQ7_Rs = calculateRs(mq7Value, MQ7_RL);
+
+  float MQ3_PPM = calculatePPM(MQ3_Rs, MQ3_Ro, -0.45, 1.8);
+  float MQ4_PPM = calculatePPM(MQ4_Rs, MQ4_Ro, -0.38, 1.5);
+  float MQ7_PPM = calculatePPM(MQ7_Rs, MQ7_Ro, -0.48, 1.6);
+
+  sensors.requestTemperatures();
+  float temperature = sensors.getTempCByIndex(0);
+  float waterLevelPercentage = calculateWaterLevel(sensorValue);
+
+  String milkQuality = evaluateMilkQuality(MQ3_PPM, MQ4_PPM, MQ7_PPM, waterLevelPercentage, temperature);
+
+  String json = "{";
+  json += "\"mq3\": " + String(MQ3_PPM) + ",";
+  json += "\"mq4\": " + String(MQ4_PPM) + ",";
+  json += "\"mq7\": " + String(MQ7_PPM) + ",";
+  json += "\"waterLevel\": " + String(waterLevelPercentage) + ",";
+  json += "\"temperature\": " + String(temperature) + ",";
+  json += "\"quality\": \"" + milkQuality + "\"";
+  json += "}";
+
+  server.send(200, "application/json", json);
+}
+
+void setup() {
+  Serial.begin(115200);
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi...");
+  }
+  Serial.println("Connected to WiFi");
+  Serial.print("IP Address: ");
+  Serial.println(WiFi.localIP());
+
+  sensors.begin();
+  MQ3_Ro = calibrateRo(analogRead(MQ3_PIN), MQ3_RL, MQ3_CLEAN_AIR_RATIO);
+  MQ4_Ro = calibrateRo(analogRead(MQ4_PIN), MQ4_RL, MQ4_CLEAN_AIR_RATIO);
+  MQ7_Ro = calibrateRo(analogRead(MQ7_PIN), MQ7_RL, MQ7_CLEAN_AIR_RATIO);
+
+  server.on("/", handleRoot);
+  server.on("/data", handleData);
+  server.begin();
+  Serial.println("Web server started");
+}
+
+void loop() {
+  server.handleClient();
+}
