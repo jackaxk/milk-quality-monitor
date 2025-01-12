@@ -64,23 +64,4 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="script.js"></script>
-
-  <!-- JavaScript to Fetch Data from SheetDB API -->
-  <script>
-    fetch('https://sheetdb.io/api/v1/your-api-endpoint')  // Use your SheetDB API URL
-      .then(response => response.json())  // Parse the response as JSON
-      .then(data => {
-        const latestEntry = data[data.length - 1];  // Get the latest entry from the sheet
-        document.getElementById('mq3').innerText = latestEntry.mq3;  // Display mq3 value
-        document.getElementById('mq4').innerText = latestEntry.mq4;  // Display mq4 value
-        document.getElementById('mq7').innerText = latestEntry.mq7;  // Display mq7 value
-        document.getElementById('waterLevel').innerText = latestEntry.waterLevel;  // Display water level
-        document.getElementById('temperature').innerText = latestEntry.temperature;  // Display temperature
-        document.getElementById('quality').innerText = latestEntry.quality;  // Display milk quality
-      })
-      .catch(error => console.error('Error fetching data:', error));  // Error handling
-  </script>
-
-</body>
-</html>
+  <script src="script.js"></sc
