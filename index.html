@@ -22,46 +22,24 @@
       <h2>Milk Quality Index</h2>
       <div class="data"><strong>Overall Quality:</strong> <span id="quality">Loading...</span></div>
     </div>
-    <div class="algorithm">
-      <h2>Milk Quality Algorithm</h2>
-      <p>The Milk Quality Index is calculated using the following parameters and scoring system:</p>
-      <ul>
-        <li><strong>Carbon Monoxide (MQ-7):</strong> 15% weight — 15 points for 0–5 ppm, 8 points for 6–20 ppm.</li>
-        <li><strong>Methane (MQ-4):</strong> 20% weight — 20 points for 0–200 ppm, 10 points for 201–400 ppm.</li>
-        <li><strong>Alcohol (MQ-3):</strong> 25% weight — 25 points for 0–100 ppm, 12 points for 101–300 ppm.</li>
-        <li><strong>Milk Volume (Water Level):</strong> 15% weight — 15 points for 80–100%, 8 points for 30–79%.</li>
-        <li><strong>Temperature:</strong> 25% weight — 25 points for 0–4°C, 10 points for 5–10°C.</li>
-      </ul>
-      <p>The overall quality is categorized as:</p>
-      <ul>
-        <li><strong>Excellent:</strong> 80-100 points</li>
-        <li><strong>Good:</strong> 60-79 points</li>
-        <li><strong>Fair:</strong> 40-59 points</li>
-        <li><strong>Poor:</strong> 20-39 points</li>
-        <li><strong>Very Poor:</strong> Below 20 points</li>
-      </ul>
-    </div>
-
-    <!-- Graph Buttons -->
-    <div class="buttons">
-      <button id="btnMQ3" class="active">MQ-3 Graph</button>
-      <button id="btnMQ4">MQ-4 Graph</button>
-      <button id="btnMQ7">MQ-7 Graph</button>
-    </div>
-
-    <!-- Graphs Section -->
-    <div class="graphs">
-      <div id="graphMQ3Container" class="graph-container" style="display: block;">
-        <canvas id="graphMQ3"></canvas>
-      </div>
-      <div id="graphMQ4Container" class="graph-container">
-        <canvas id="graphMQ4"></canvas>
-      </div>
-      <div id="graphMQ7Container" class="graph-container">
-        <canvas id="graphMQ7"></canvas>
-      </div>
-    </div>
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="script.js"></sc
+  <script src="script.js"></script>
+
+  <script>
+    fetch('https://sheetdb.io/api/v1/{your-api-id}')  // Use your SheetDB API URL
+      .then(response => response.json())  // Parse the response as JSON
+      .then(data => {
+        const latestEntry = data[data.length - 1];  // Get the latest entry from the sheet
+        document.getElementById('mq3').innerText = latestEntry.mq3;  // Display mq3 value
+        document.getElementById('mq4').innerText = latestEntry.mq4;  // Display mq4 value
+        document.getElementById('mq7').innerText = latestEntry.mq7;  // Display mq7 value
+        document.getElementById('waterLevel').innerText = latestEntry.waterLevel;  // Display water level
+        document.getElementById('temperature').innerText = latestEntry.temperature;  // Display temperature
+        document.getElementById('quality').innerText = latestEntry.quality;  // Display milk quality
+      })
+      .catch(error => console.error('Error fetching data:', error));  // Error handling
+  </script>
+</body>
+</html>
